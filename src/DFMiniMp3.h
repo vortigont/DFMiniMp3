@@ -25,6 +25,7 @@ License along with DFMiniMp3.  If not, see
 -------------------------------------------------------------------------*/
 #pragma once
 
+#include <functional>
 #include "internal/queueSimple.h"
 #include "DfMp3Types.h"
 #include "internal/Mp3Packet.h"
@@ -33,31 +34,33 @@ License along with DFMiniMp3.  If not, see
 #include "Mp3ChipMH2024K16SS.h"
 #include "Mp3ChipIncongruousNoAck.h"
 
+#define DF_ACK_TIMEOUT   900
+/*
+using DF_OnPlayFinishedCallBack = std::function< void (DFMiniMp3& mp3, DfMp3_PlaySources source, uint16_t track)>;
+using DF_OnPlaySourceEvent = std::function< void (DFMiniMp3& mp3, DfMp3_PlaySources source, DfMp3_SourceEvent event)>;
+using DF_OnError = std::function< void (DFMiniMp3& mp3, uint16_t errorCode)>;
+*/
 
-template <class T_SERIAL_METHOD, class T_NOTIFICATION_METHOD, class T_CHIP_VARIANT = Mp3ChipOriginal, uint32_t C_ACK_TIMEOUT = 900>
+template <class T_NOTIFICATION_METHOD, class T_CHIP_VARIANT = Mp3ChipOriginal>
 class DFMiniMp3
 {
 public:
-    explicit DFMiniMp3(T_SERIAL_METHOD& serial) :
+    explicit DFMiniMp3(Stream& serial, uint32_t ackTimeout = DF_ACK_TIMEOUT) :
         _serial(serial),
+        _c_AckTimeout(ackTimeout),
         _comRetries(3), // default to three retries
         _isOnline(false),
 #ifdef DfMiniMp3Debug
         _inTransaction(0),
 #endif
         _queueNotifications(4) // default to 4 notifications in queue
-    {
-    }
+    {}
 
-    void begin(unsigned long baud = 9600)
-    {
-        _serial.begin(baud);
-    }
+    // deprecated
+    void begin(unsigned long baud = 9600){}
 
-    void begin(int8_t rxPin, int8_t txPin, unsigned long baud = 9600)
-    {
-        _serial.begin(baud, SERIAL_8N1, rxPin, txPin);
-    }
+    // deprecated
+    void begin(int8_t rxPin, int8_t txPin, unsigned long baud = 9600){}
 
     void setComRetries(uint8_t retries)
     {
@@ -374,10 +377,11 @@ private:
 #endif
     };
 
-    const uint32_t c_AckTimeout = C_ACK_TIMEOUT;
+    // Serial port object for communicating with player
+    Stream& _serial;
+    const uint32_t _c_AckTimeout;
     const uint32_t c_NoAckTimeout = 50; // 30ms observerd, added a little overhead
 
-    T_SERIAL_METHOD& _serial;
     uint8_t _comRetries;
     volatile bool _isOnline;
 #ifdef DfMiniMp3Debug
@@ -555,7 +559,7 @@ private:
             // with ack support, 
             // we may retry if we don't get what we expected
             //
-            _serial.setTimeout(c_AckTimeout);             
+            _serial.setTimeout(_c_AckTimeout);
             do
             {
                 sendPacket(command, arg, requestAck);
