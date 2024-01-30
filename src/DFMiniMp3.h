@@ -26,13 +26,10 @@ License along with DFMiniMp3.  If not, see
 #pragma once
 
 #include <functional>
-#include "internal/queueSimple.h"
-#include "DfMp3Types.h"
-#include "internal/Mp3Packet.h"
+#include <memory>
 #include "Mp3ChipBase.h"
-#include "Mp3ChipOriginal.h"
-#include "Mp3ChipMH2024K16SS.h"
-#include "Mp3ChipIncongruousNoAck.h"
+#include "Stream.h"
+#include "internal/queueSimple.h"
 
 #define DF_ACK_TIMEOUT   900
 /*
@@ -41,26 +38,53 @@ using DF_OnPlaySourceEvent = std::function< void (DFMiniMp3& mp3, DfMp3_PlaySour
 using DF_OnError = std::function< void (DFMiniMp3& mp3, uint16_t errorCode)>;
 */
 
-template <class T_NOTIFICATION_METHOD, class T_CHIP_VARIANT = Mp3ChipOriginal>
+template <class T_NOTIFICATION_METHOD>
 class DFMiniMp3
 {
 public:
-    explicit DFMiniMp3(Stream& serial, uint32_t ackTimeout = DF_ACK_TIMEOUT) :
-        _serial(serial),
-        _c_AckTimeout(ackTimeout),
-        _comRetries(3), // default to three retries
-        _isOnline(false),
+    explicit DFMiniMp3(Stream& serial, DfMp3Type type = DfMp3Type::origin, uint32_t ackTimeout = DF_ACK_TIMEOUT) :
+            _serial(serial),
+            _c_AckTimeout(ackTimeout),
+            _comRetries(3), // default to three retries
+            _isOnline(false),
 #ifdef DfMiniMp3Debug
-        _inTransaction(0),
+            _inTransaction(0),
 #endif
-        _queueNotifications(4) // default to 4 notifications in queue
-    {}
+            _queueNotifications(4) // default to 4 notifications in queue
+        {
+            switch (type){
+                case DfMp3Type::nochksum :
+                    _player = std::make_unique<Mp3ChipMH2024K16SS>();
+                    break;
+                case DfMp3Type::incongruousNoAck :
+                    _player = std::make_unique<Mp3ChipIncongruousNoAck>();
+                    break;
+                default :
+                    _player = std::make_unique<DFPlayerOriginal>();
+            }        
+        }
 
-    // deprecated
-    void begin(unsigned long baud = 9600){}
+    /**
+     * @brief Construct a new DFMiniMp3 object with user-provided Mp3Chip handler class
+     * all arguments are mandatory to avoid overload with know-types
+     * @param serial - serial port stream object
+     * @param type - should be DfMp3Type::unknown
+     * @param mp3chip - unique pointer to the pobject derived from Mp3ChipBase, constructor will take the ownership of the object
+     * @param ackTimeout - aknowledge timemout, could be DF_ACK_TIMEOUT by default
+     */
+    explicit DFMiniMp3(Stream& serial, DfMp3Type type, std::unique_ptr<Mp3ChipBase> mp3chip, uint32_t ackTimeout) :
+            _serial(serial),
+            _c_AckTimeout(ackTimeout),
+            _comRetries(3), // default to three retries
+            _isOnline(false),
+        #ifdef DfMiniMp3Debug
+            _inTransaction(0),
+        #endif
+            _queueNotifications(4), // default to 4 notifications in queue
+            _player(std::move(mp3chip)) {}
 
-    // deprecated
-    void begin(int8_t rxPin, int8_t txPin, unsigned long baud = 9600){}
+
+    DFMiniMp3(Stream& serial, std::unique_ptr<Mp3ChipBase> mp3chip, uint32_t ackTimeout = DF_ACK_TIMEOUT);
 
     void setComRetries(uint8_t retries)
     {
@@ -75,10 +99,9 @@ public:
         // check for any new notifications in comms
         uint8_t maxDrains = 6;
 
-        while (maxDrains &&
-            _serial.available() >= static_cast<int>(sizeof(typename T_CHIP_VARIANT::ReceptionPacket)))
+        while (maxDrains)
         {
-            listenForReply(Mp3_Commands_None);
+            listenForReply(Mp3_Commands_None, false);
             maxDrains--;
         }
     }
@@ -256,16 +279,14 @@ public:
         setCommand(Mp3_Commands_Awake);
     }
 
-    void reset(bool waitForOnline = true)
+    /**
+     * @brief send reset command to player
+     * this call will return immidiately. Checking when (if) player will get back on-line should be done via event callbacks
+     */
+    void reset()
     {
-        setCommand(Mp3_Commands_Reset);
-
         _isOnline = false;
-        while (waitForOnline && !_isOnline)
-        {
-            delay(1);
-            loop();
-        }
+        setCommand(Mp3_Commands_Reset);
     }
 
     void start()
@@ -389,6 +410,8 @@ private:
 #endif
     queueSimple_t<reply_t> _queueNotifications;
 
+    std::unique_ptr<Mp3ChipBase> _player;
+
     void appendNotification(reply_t reply)
     {
         // store the notification for later calling so
@@ -459,73 +482,70 @@ private:
 
     void sendPacket(uint8_t command, uint16_t arg = 0, bool requestAck = false)
     {
-        typename T_CHIP_VARIANT::SendPacket packet = T_CHIP_VARIANT::generatePacket(command, arg, requestAck);
+        //typename T_CHIP_VARIANT::SendPacket packet = T_CHIP_VARIANT::generatePacket(command, arg, requestAck);
+        DFPlayerPacket packet = _player->makeTXPacket(command, arg, requestAck);
 
 #ifdef DfMiniMp3Debug
         DfMiniMp3Debug.print("OUT ");
-        printRawPacket(reinterpret_cast<const uint8_t*>(&packet), sizeof(packet));
+        printRawPacket(packet.getData());
+        //printRawPacket(reinterpret_cast<const uint8_t*>(&packet), sizeof(packet));
         DfMiniMp3Debug.println();
 #endif
 
-        _serial.write(reinterpret_cast<uint8_t*>(&packet), sizeof(packet));
+        //_serial.write(reinterpret_cast<uint8_t*>(&packet), sizeof(packet));
+        _serial.write(packet.getData().data(), packet.size());
     }
 
-    bool readPacket(reply_t* reply)
+    bool readPacket(reply_t* reply, bool wait4data = true)
     {
-        typename T_CHIP_VARIANT::ReceptionPacket in;
-        uint8_t read;
+        //typename T_CHIP_VARIANT::ReceptionPacket in;
+        DFPlayerPacket inpkt = _player->makeRXPacket();
+
+        // do not block on read if not required
+        if (_serial.available() < inpkt.getData().size() && !wait4data ){
+            return false;
+        }
 
         // init our out args always
         *reply = {};
 
-        // try to sync our reads to the packet start
-        do
-        {
-            // we use readBytes as it gives us the standard timeout
-            read = _serial.readBytes(&in.startCode, 1);
-
-            if (read != 1)
-            {
-                // nothing read
-                reply->arg = DfMp3_Error_RxTimeout;
-
-                return false;
-            }
-        } while (in.startCode != 0x7e);
-
-        read += _serial.readBytes(&in.version, sizeof(in) - 1);
+        size_t readlen = _serial.readBytes(inpkt.getData().data(), inpkt.size());
 
 #ifdef DfMiniMp3Debug
         DfMiniMp3Debug.print("IN ");
-        printRawPacket(reinterpret_cast<const uint8_t*>(&in), read);
+        printRawPacket(inpkt.getData());
+        //printRawPacket(reinterpret_cast<const uint8_t*>(&in), read);
         DfMiniMp3Debug.println();
 #endif
 
-        if (read < sizeof(in))
+        if (readlen < inpkt.size())
         {
+            DfMiniMp3Debug.println("DF: bad size pkt");
             // not enough bytes, corrupted packet
             reply->arg = DfMp3_Error_PacketSize;
             return false;
         }
 
-        if (in.version != 0xFF ||
-            in.length != 0x06 ||
-            in.endCode != 0xef)
+        if (!inpkt.validate())
         {
+            DfMiniMp3Debug.println("DF: invalid pkt");
             // invalid version or corrupted packet
             reply->arg = DfMp3_Error_PacketHeader;
+            // either we received garbage or lost/missed packet header, won't look for it, just flush stream and retry
+            _serial.flush();
             return false;
         }
 
-        if (!T_CHIP_VARIANT::validateChecksum(in))
+        if (!inpkt.validateChecksum())
         {
+            DfMiniMp3Debug.print("DF: bad csum");
             // checksum failed, corrupted packet
             reply->arg = DfMp3_Error_PacketChecksum;
             return false;
         }
 
-        reply->command = in.command;
-        reply->arg = ((static_cast<uint16_t>(in.hiByteArgument) << 8) | in.lowByteArgument);
+        reply->command = inpkt.getCmd();
+        reply->arg = inpkt.getArg();
 
         return true;
     }
@@ -554,7 +574,7 @@ private:
 #ifdef DfMiniMp3Debug
         _inTransaction++;
 #endif
-        if (T_CHIP_VARIANT::commandSupportsAck(command))
+        if (_player->commandSupportsAck(command))
         {
             // with ack support, 
             // we may retry if we don't get what we expected
@@ -603,11 +623,11 @@ private:
         retryCommand(command, Mp3_Replies_Ack, arg, true);
     }
 
-    reply_t listenForReply(uint8_t command)
+    reply_t listenForReply(uint8_t command, bool wait4data = true)
     {
         reply_t reply;
 
-        while (readPacket(&reply))
+        while (readPacket(&reply, wait4data))
         {
             switch (reply.command)
             {
@@ -657,16 +677,10 @@ private:
     }
 
 #ifdef DfMiniMp3Debug
-    void printRawPacket(const uint8_t* data, size_t dataSize)
+    void printRawPacket(const DFPlayerData& data)
     {
-        char formated[8];
-        const uint8_t* end = data + dataSize;
-
-        while (data < end)
-        {
-            sprintf(formated, " %02x", *data);
-            DfMiniMp3Debug.print(formated);
-            data++;
+        for (auto &c : data){
+            DfMiniMp3Debug.printf("%02X ", c);
         }
     }
 

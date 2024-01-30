@@ -25,33 +25,146 @@ License along with DFMiniMp3.  If not, see
 -------------------------------------------------------------------------*/
 
 #pragma once
+#include <stdint.h>
+#include <vector>
+#include "DfMp3Types.h"
+
+
+// 7E FF 06 0F 00 01 01 xx xx EF
+// 0	->	7E is start code
+// 1	->	FF is version
+// 2	->	06 is length
+// 3	->	0F is command
+// 4	->	00 is no receive
+// 5~6	->	01 01 is argument
+// 7~8	->	checksum = 0 - ( FF+06+0F+00+01+01 )
+// 9	->	EF is end code
+struct Mp3_Packet_WithCheckSum
+{
+    uint8_t startCode;
+    uint8_t version;
+    uint8_t length;
+    uint8_t command;
+    uint8_t requestAck;
+    uint8_t hiByteArgument;
+    uint8_t lowByteArgument;
+    uint8_t hiByteCheckSum;
+    uint8_t lowByteCheckSum;
+    uint8_t endCode;
+};
+
+// 7E FF 06 0F 00 01 01 EF
+// 0	->	7E is start code
+// 1	->	FF is version
+// 2	->	06 is length
+// 3	->	0F is command
+// 4	->	00 is no receive
+// 5~6	->	01 01 is argument
+// 7	->	EF is end code
+struct Mp3_Packet_WithoutCheckSum
+{
+    uint8_t startCode;
+    uint8_t version;
+    uint8_t length;
+    uint8_t command;
+    uint8_t requestAck;
+    uint8_t hiByteArgument;
+    uint8_t lowByteArgument;
+    uint8_t endCode;
+};
+
+using DFPlayerData = std::vector<uint8_t>;
+
+class DFPlayerPacket {
+    std::vector<uint8_t> _msg;
+
+    uint16_t _calcChecksum();
+
+public:
+    explicit DFPlayerPacket(bool with_chksum = true);
+
+    bool setChecksum();
+
+    bool validateChecksum();
+
+    bool validate();
+
+    size_t size() const { return _msg.size(); };
+
+    DFPlayerData& getData(){ return _msg; };
+
+    /**
+     * @brief Get commad value in packet
+     * 
+     * @return uint8_t 
+     */
+    uint8_t getCmd() const { return _msg.at(3); };
+
+    /**
+     * @brief Get command argument value
+     * 
+     * @return uint16_t 
+     */
+    uint16_t getArg() const { return ((_msg.at(5) << 8) | _msg.at(6)); };
+};
 
 
 class Mp3ChipBase
 {
-private:
-    static uint16_t calcChecksum(const Mp3_Packet_WithCheckSum& packet)
-    {
-        uint16_t sum = 0xFFFF;
-        for (const uint8_t* packetByte = &(packet.version); packetByte != &(packet.hiByteCheckSum); packetByte++)
-        {
-            sum -= *packetByte;
-        }
-        return sum + 1;
-    }
 
 public:
-    static void setChecksum(Mp3_Packet_WithCheckSum* out)
-    {
-        uint16_t sum = calcChecksum(*out);
+    Mp3ChipBase(bool txChkSum = true, bool rxChkSum = true) : sendCheckSum(txChkSum), recvCheckSum(rxChkSum) {};
+    virtual ~Mp3ChipBase(){};
 
-        out->hiByteCheckSum = (sum >> 8);
-        out->lowByteCheckSum = (sum & 0xff);
-    }
+    const bool sendCheckSum;
+    const bool recvCheckSum;
 
-    static bool validateChecksum(const Mp3_Packet_WithCheckSum& in)
+    /**
+     * @brief  returns if player supports command acknowledge 
+     * pure virtual method, to be overriden from derrived class
+     * @param command 
+     * @return true 
+     * @return false 
+     */
+    virtual bool commandSupportsAck( uint8_t command) = 0;
+
+    virtual DFPlayerPacket makeTXPacket(uint8_t command, uint16_t arg, bool requestAck = false);
+
+    virtual DFPlayerPacket makeRXPacket(){ return DFPlayerPacket(recvCheckSum); };
+
+};
+
+class DFPlayerOriginal : public Mp3ChipBase
+{
+public:
+    DFPlayerOriginal() : Mp3ChipBase(){}
+
+    //typedef Mp3_Packet_WithCheckSum SendPacket;
+    //typedef Mp3_Packet_WithCheckSum ReceptionPacket;
+
+    bool commandSupportsAck([[maybe_unused]] uint8_t command) override { return true; }
+};
+
+class Mp3ChipIncongruousNoAck : public Mp3ChipBase
+{
+public:
+    Mp3ChipIncongruousNoAck() : Mp3ChipBase(){}
+
+    //typedef Mp3_Packet_WithCheckSum SendPacket;
+    //typedef Mp3_Packet_WithCheckSum ReceptionPacket;
+
+    bool commandSupportsAck(uint8_t command) override
     {
-        uint16_t sum = calcChecksum(in);
-        return (sum == ((static_cast<uint16_t>(in.hiByteCheckSum) << 8) | in.lowByteCheckSum));
+        return (command > Mp3_Commands_Requests);
     }
+};
+
+class Mp3ChipMH2024K16SS : public Mp3ChipBase
+{
+public:
+    Mp3ChipMH2024K16SS() : Mp3ChipBase(false){}
+    //typedef Mp3_Packet_WithoutCheckSum SendPacket;
+    //typedef Mp3_Packet_WithCheckSum ReceptionPacket;
+
+    bool commandSupportsAck(uint8_t command) override { return true; }
 };
