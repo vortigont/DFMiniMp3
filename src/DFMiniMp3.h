@@ -32,13 +32,12 @@ License along with DFMiniMp3.  If not, see
 #include "internal/queueSimple.h"
 
 #define DF_ACK_TIMEOUT   900
-/*
-using DF_OnPlayFinishedCallBack = std::function< void (DFMiniMp3& mp3, DfMp3_PlaySources source, uint16_t track)>;
-using DF_OnPlaySourceEvent = std::function< void (DFMiniMp3& mp3, DfMp3_PlaySources source, DfMp3_SourceEvent event)>;
-using DF_OnError = std::function< void (DFMiniMp3& mp3, uint16_t errorCode)>;
-*/
 
-template <class T_NOTIFICATION_METHOD>
+using DF_OnPlayFinished = std::function< void (DfMp3_PlaySources source, uint16_t track)>;
+using DF_OnPlaySourceEvent = std::function< void (DfMp3_SourceEvent event, DfMp3_PlaySources source)>;
+using DF_OnError = std::function< void (uint16_t errorCode)>;
+
+
 class DFMiniMp3
 {
 public:
@@ -112,12 +111,13 @@ public:
     // be avoided as there is not a way to tell a notification from a value return
     // YX5200-24SS - sends reply
     // MH2024K-24SS - sends NO reply --> results in error notification
+/*
     [[deprecated("Command in conflict with notification with no valid solution.")]]
     DfMp3_PlaySources getPlaySources()
     {
         return getCommand(Mp3_Commands_GetPlaySources).arg;
     }
-
+*/
     uint16_t getSoftwareVersion()
     {
         return getCommand(Mp3_Commands_GetSoftwareVersion).arg;
@@ -374,6 +374,31 @@ public:
         return _isOnline;
     }
 
+    /**
+     * @brief set functional call-back for PlayFinished event
+     * 
+     * @param cb - callback function void (DfMp3_PlaySources source, uint16_t track)
+     * @return * void 
+     */
+    void onPlayFinished(DF_OnPlayFinished cb){ _cb_OnPlayFinished = cb; }
+
+    /**
+     * @brief set functional call-back for PlaySource event
+     * 
+     * @param cb - callback function DfMp3_PlaySources source, DfMp3_SourceEvent event
+     * @return * void 
+     */
+    void onPlaySource(DF_OnPlaySourceEvent cb){ _cb_OnPlaySourceEvent = cb; }
+
+    /**
+     * @brief set functional call-back for PlayFinished event
+     * 
+     * @param cb - void (uint16_t errorCode)
+     * @return * void 
+     */
+    void onError(DF_OnError cb){ _cb_OnErr = cb; }
+
+
 private:
     struct reply_t
     {
@@ -410,7 +435,13 @@ private:
 #endif
     queueSimple_t<reply_t> _queueNotifications;
 
+    // Chip handler instance
     std::unique_ptr<Mp3ChipBase> _player;
+
+    // func callback pointers
+    DF_OnPlayFinished _cb_OnPlayFinished = nullptr;
+    DF_OnPlaySourceEvent _cb_OnPlaySourceEvent = nullptr;
+    DF_OnError _cb_OnErr = nullptr;
 
     void appendNotification(reply_t reply)
     {
@@ -438,31 +469,29 @@ private:
         switch (reply.command)
         {
         case Mp3_Replies_TrackFinished_Usb: // usb
-            T_NOTIFICATION_METHOD::OnPlayFinished(*this, DfMp3_PlaySources_Usb, reply.arg);
+            if (_cb_OnPlayFinished) _cb_OnPlayFinished(DfMp3_PlaySources_Usb, reply.arg);
             break;
 
         case Mp3_Replies_TrackFinished_Sd: // micro sd
-            T_NOTIFICATION_METHOD::OnPlayFinished(*this, DfMp3_PlaySources_Sd, reply.arg);
+            if (_cb_OnPlayFinished) _cb_OnPlayFinished(DfMp3_PlaySources_Sd, reply.arg);
+            //T_NOTIFICATION_METHOD::OnPlayFinished(*this, DfMp3_PlaySources_Sd, reply.arg);
             break;
 
         case Mp3_Replies_TrackFinished_Flash: // flash
-            T_NOTIFICATION_METHOD::OnPlayFinished(*this, DfMp3_PlaySources_Flash, reply.arg);
+            if (_cb_OnPlayFinished) _cb_OnPlayFinished(DfMp3_PlaySources_Flash, reply.arg);
+            //T_NOTIFICATION_METHOD::OnPlayFinished(*this, DfMp3_PlaySources_Flash, reply.arg);
             break;
 
         case Mp3_Replies_PlaySource_Online:
-            T_NOTIFICATION_METHOD::OnPlaySourceOnline(*this, static_cast<DfMp3_PlaySources>(reply.arg));
-            break;
-
         case Mp3_Replies_PlaySource_Inserted:
-            T_NOTIFICATION_METHOD::OnPlaySourceInserted(*this, static_cast<DfMp3_PlaySources>(reply.arg));
-            break;
-
         case Mp3_Replies_PlaySource_Removed:
-            T_NOTIFICATION_METHOD::OnPlaySourceRemoved(*this, static_cast<DfMp3_PlaySources>(reply.arg));
+            if (_cb_OnPlaySourceEvent) _cb_OnPlaySourceEvent(static_cast<DfMp3_SourceEvent>(reply.command), static_cast<DfMp3_PlaySources>(reply.arg));
+            //T_NOTIFICATION_METHOD::OnPlaySourceOnline(*this, static_cast<DfMp3_PlaySources>(reply.arg));
             break;
 
         case Mp3_Replies_Error: // error
-            T_NOTIFICATION_METHOD::OnError(*this, reply.arg);
+            if (_cb_OnErr) _cb_OnErr(reply.arg);
+            //T_NOTIFICATION_METHOD::OnError(*this, reply.arg);
             break;
 
         default:
@@ -606,7 +635,7 @@ private:
 
         if (reply.command == Mp3_Replies_Error)
         {
-            T_NOTIFICATION_METHOD::OnError(*this, reply.arg);
+            if (_cb_OnErr) _cb_OnErr(reply.arg);
             reply = {};
         }
         
