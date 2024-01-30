@@ -24,6 +24,7 @@ License along with DFMiniMp3.  If not, see
 <http://www.gnu.org/licenses/>.
 -------------------------------------------------------------------------*/
 #pragma once
+#include <Arduino.h>
 
 template <class T_ITEM> class queueSimple_t
 {

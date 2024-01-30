@@ -139,9 +139,6 @@ class DFPlayerOriginal : public Mp3ChipBase
 public:
     DFPlayerOriginal() : Mp3ChipBase(){}
 
-    //typedef Mp3_Packet_WithCheckSum SendPacket;
-    //typedef Mp3_Packet_WithCheckSum ReceptionPacket;
-
     bool commandSupportsAck([[maybe_unused]] uint8_t command) override { return true; }
 };
 
@@ -149,9 +146,6 @@ class Mp3ChipIncongruousNoAck : public Mp3ChipBase
 {
 public:
     Mp3ChipIncongruousNoAck() : Mp3ChipBase(){}
-
-    //typedef Mp3_Packet_WithCheckSum SendPacket;
-    //typedef Mp3_Packet_WithCheckSum ReceptionPacket;
 
     bool commandSupportsAck(uint8_t command) override
     {
@@ -163,8 +157,6 @@ class Mp3ChipMH2024K16SS : public Mp3ChipBase
 {
 public:
     Mp3ChipMH2024K16SS() : Mp3ChipBase(false){}
-    //typedef Mp3_Packet_WithoutCheckSum SendPacket;
-    //typedef Mp3_Packet_WithCheckSum ReceptionPacket;
 
     bool commandSupportsAck(uint8_t command) override { return true; }
 };

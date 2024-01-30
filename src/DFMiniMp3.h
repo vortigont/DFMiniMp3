@@ -41,27 +41,7 @@ using DF_OnError = std::function< void (uint16_t errorCode)>;
 class DFMiniMp3
 {
 public:
-    explicit DFMiniMp3(Stream& serial, DfMp3Type type = DfMp3Type::origin, uint32_t ackTimeout = DF_ACK_TIMEOUT) :
-            _serial(serial),
-            _c_AckTimeout(ackTimeout),
-            _comRetries(3), // default to three retries
-            _isOnline(false),
-#ifdef DfMiniMp3Debug
-            _inTransaction(0),
-#endif
-            _queueNotifications(4) // default to 4 notifications in queue
-        {
-            switch (type){
-                case DfMp3Type::nochksum :
-                    _player = std::make_unique<Mp3ChipMH2024K16SS>();
-                    break;
-                case DfMp3Type::incongruousNoAck :
-                    _player = std::make_unique<Mp3ChipIncongruousNoAck>();
-                    break;
-                default :
-                    _player = std::make_unique<DFPlayerOriginal>();
-            }        
-        }
+    explicit DFMiniMp3(Stream& serial, DfMp3Type type = DfMp3Type::origin, uint32_t ackTimeout = DF_ACK_TIMEOUT);
 
     /**
      * @brief Construct a new DFMiniMp3 object with user-provided Mp3Chip handler class
@@ -71,39 +51,25 @@ public:
      * @param mp3chip - unique pointer to the pobject derived from Mp3ChipBase, constructor will take the ownership of the object
      * @param ackTimeout - aknowledge timemout, could be DF_ACK_TIMEOUT by default
      */
-    explicit DFMiniMp3(Stream& serial, DfMp3Type type, std::unique_ptr<Mp3ChipBase> mp3chip, uint32_t ackTimeout) :
-            _serial(serial),
-            _c_AckTimeout(ackTimeout),
-            _comRetries(3), // default to three retries
-            _isOnline(false),
-        #ifdef DfMiniMp3Debug
-            _inTransaction(0),
-        #endif
-            _queueNotifications(4), // default to 4 notifications in queue
-            _player(std::move(mp3chip)) {}
+    explicit DFMiniMp3(Stream& serial, DfMp3Type type, std::unique_ptr<Mp3ChipBase> mp3chip, uint32_t ackTimeout);
 
 
     DFMiniMp3(Stream& serial, std::unique_ptr<Mp3ChipBase> mp3chip, uint32_t ackTimeout = DF_ACK_TIMEOUT);
 
-    void setComRetries(uint8_t retries)
-    {
-        _comRetries = retries;
-    }
+    /**
+     * @brief Set number of retries for command if first attempt has failed
+     * 
+     * @param retries 
+     */
+    void setComRetries(uint8_t retries){ _comRetries = retries; }
 
-    void loop()
-    {
-        // call all outstanding notifications
-        while (abateNotification());
-
-        // check for any new notifications in comms
-        uint8_t maxDrains = 6;
-
-        while (maxDrains)
-        {
-            listenForReply(Mp3_Commands_None, false);
-            maxDrains--;
-        }
-    }
+    /**
+     * @brief loop hanlder
+     * should be called periodically to poll for events from serial
+     * could be placed in arduino's loop() or called via scheduler every 50-100 ms
+     * 
+     */
+    void loop();
 
     // Does not work with all models.
     // 0x3f reply overlaps the play source online notification
@@ -118,6 +84,7 @@ public:
         return getCommand(Mp3_Commands_GetPlaySources).arg;
     }
 */
+
     uint16_t getSoftwareVersion()
     {
         return getCommand(Mp3_Commands_GetSoftwareVersion).arg;
@@ -167,28 +134,7 @@ public:
         setCommand(Mp3_Commands_PlayPrevTrack);
     }
 
-    uint16_t getCurrentTrack(DfMp3_PlaySource source = DfMp3_PlaySource_Sd)
-    {
-        uint8_t command;
-
-        switch (source)
-        {
-        case DfMp3_PlaySource_Usb:
-            command = Mp3_Commands_GetUsbCurrentTrack;
-            break;
-        case DfMp3_PlaySource_Sd:
-            command = Mp3_Commands_GetSdCurrentTrack;
-            break;
-        case DfMp3_PlaySource_Flash:
-            command = Mp3_Commands_GetFlashCurrentTrack;
-            break;
-        default:
-            command = Mp3_Commands_GetSdCurrentTrack;
-            break;
-        }
-
-        return getCommand(command).arg;
-    }
+    uint16_t getCurrentTrack(DfMp3_PlaySource source = DfMp3_PlaySource_Sd);
 
     // 0- 30
     void setVolume(uint8_t volume)
@@ -304,44 +250,19 @@ public:
         setCommand(Mp3_Commands_Stop);
     }
 
-    DfMp3_Status getStatus()
-    {
-        uint16_t reply = getCommand(Mp3_Commands_GetStatus).arg;
-
-        DfMp3_Status status;
-        status.source = static_cast<DfMp3_StatusSource>(reply >> 8);
-        status.state = static_cast<DfMp3_StatusState>(reply & 0xff);
-
-        return status;
-    }
+    /**
+     * @brief polls player for status and returns soruce state
+     * 
+     * @return DfMp3_Status 
+     */
+    DfMp3_Status getStatus();
 
     uint16_t getFolderTrackCount(uint16_t folder)
     {
         return getCommand(Mp3_Commands_GetFolderTrackCount, folder).arg;
     }
 
-    uint16_t getTotalTrackCount(DfMp3_PlaySource source = DfMp3_PlaySource_Sd)
-    {
-        uint8_t command;
-
-        switch (source)
-        {
-        case DfMp3_PlaySource_Usb:
-            command = Mp3_Commands_GetUsbTrackCount;
-            break;
-        case DfMp3_PlaySource_Sd:
-            command = Mp3_Commands_GetSdTrackCount;
-            break;
-        case DfMp3_PlaySource_Flash:
-            command = Mp3_Commands_GetFlashTrackCount;
-            break;
-        default:
-            command = Mp3_Commands_GetSdTrackCount;
-            break;
-        }
-
-        return getCommand(command).arg;
-    }
+    uint16_t getTotalTrackCount(DfMp3_PlaySource source = DfMp3_PlaySource_Sd);
 
     uint16_t getTotalFolderCount()
     {
@@ -349,30 +270,22 @@ public:
     }
 
     // sd:/advert/####track name
-    void playAdvertisement(uint16_t track)
-    {
-        setCommand(Mp3_Commands_PlayAdvertTrack, track);
-    }
+    void playAdvertisement(uint16_t track){ setCommand(Mp3_Commands_PlayAdvertTrack, track); }
 
     void stopAdvertisement()
     {
         setCommand(Mp3_Commands_StopAdvert);
     }
 
-    void enableDac()
-    {
-        setCommand(Mp3_Commands_SetDacInactive, 0x00);
-    }
+    void enableDac(){ setCommand(Mp3_Commands_SetDacInactive, 0x00); }
 
-    void disableDac()
-    {
-        setCommand(Mp3_Commands_SetDacInactive, 0x01);
-    }
+    void disableDac(){ setCommand(Mp3_Commands_SetDacInactive, 0x01); }
 
-    bool isOnline() const
-    {
-        return _isOnline;
-    }
+    /**
+     * @brief return true if any of callback events about playing source was received
+     * 
+     */
+    bool isOnline() const { return _isOnline; }
 
     /**
      * @brief set functional call-back for PlayFinished event
@@ -451,267 +364,25 @@ private:
         _queueNotifications.Enqueue(reply);
     }
 
-    bool abateNotification()
-    {
-        // remove the first notification and call it
-        reply_t reply;
-        bool wasAbated = false;
-        if (_queueNotifications.Dequeue(&reply))
-        {
-            callNotification(reply);
-            wasAbated = true;
-        }
-        return wasAbated;
-    }
+    bool abateNotification();
 
-    void callNotification(reply_t reply)
-    {
-        switch (reply.command)
-        {
-        case Mp3_Replies_TrackFinished_Usb: // usb
-            if (_cb_OnPlayFinished) _cb_OnPlayFinished(DfMp3_PlaySources_Usb, reply.arg);
-            break;
+    void callNotification(reply_t reply);
 
-        case Mp3_Replies_TrackFinished_Sd: // micro sd
-            if (_cb_OnPlayFinished) _cb_OnPlayFinished(DfMp3_PlaySources_Sd, reply.arg);
-            //T_NOTIFICATION_METHOD::OnPlayFinished(*this, DfMp3_PlaySources_Sd, reply.arg);
-            break;
+    void drainResponses(){ loop(); }
 
-        case Mp3_Replies_TrackFinished_Flash: // flash
-            if (_cb_OnPlayFinished) _cb_OnPlayFinished(DfMp3_PlaySources_Flash, reply.arg);
-            //T_NOTIFICATION_METHOD::OnPlayFinished(*this, DfMp3_PlaySources_Flash, reply.arg);
-            break;
+    bool readPacket(reply_t* reply, bool wait4data = true);
 
-        case Mp3_Replies_PlaySource_Online:
-        case Mp3_Replies_PlaySource_Inserted:
-        case Mp3_Replies_PlaySource_Removed:
-            if (_cb_OnPlaySourceEvent) _cb_OnPlaySourceEvent(static_cast<DfMp3_SourceEvent>(reply.command), static_cast<DfMp3_PlaySources>(reply.arg));
-            //T_NOTIFICATION_METHOD::OnPlaySourceOnline(*this, static_cast<DfMp3_PlaySources>(reply.arg));
-            break;
+    void sendPacket(uint8_t command, uint16_t arg = 0, bool requestAck = false);
 
-        case Mp3_Replies_Error: // error
-            if (_cb_OnErr) _cb_OnErr(reply.arg);
-            //T_NOTIFICATION_METHOD::OnError(*this, reply.arg);
-            break;
+    reply_t retryCommand(uint8_t command, uint8_t expectedCommand, uint16_t arg = 0, bool requestAck = false);
 
-        default:
-#ifdef DfMiniMp3Debug
-            DfMiniMp3Debug.print("INVALID NOTIFICATION: ");
-            reply.printReply();
-            DfMiniMp3Debug.println();
-#endif
-            break;
-        }
-    }
+    reply_t getCommand(uint8_t command, uint16_t arg = 0){ return retryCommand(command, command, arg); }
 
-    void drainResponses()
-    {
-        loop();
-    }
+    void setCommand(uint8_t command, uint16_t arg = 0){ retryCommand(command, Mp3_Replies_Ack, arg, true); }
 
-    void sendPacket(uint8_t command, uint16_t arg = 0, bool requestAck = false)
-    {
-        //typename T_CHIP_VARIANT::SendPacket packet = T_CHIP_VARIANT::generatePacket(command, arg, requestAck);
-        DFPlayerPacket packet = _player->makeTXPacket(command, arg, requestAck);
+    reply_t listenForReply(uint8_t command, bool wait4data = true);
 
 #ifdef DfMiniMp3Debug
-        DfMiniMp3Debug.print("OUT ");
-        printRawPacket(packet.getData());
-        //printRawPacket(reinterpret_cast<const uint8_t*>(&packet), sizeof(packet));
-        DfMiniMp3Debug.println();
-#endif
-
-        //_serial.write(reinterpret_cast<uint8_t*>(&packet), sizeof(packet));
-        _serial.write(packet.getData().data(), packet.size());
-    }
-
-    bool readPacket(reply_t* reply, bool wait4data = true)
-    {
-        //typename T_CHIP_VARIANT::ReceptionPacket in;
-        DFPlayerPacket inpkt = _player->makeRXPacket();
-
-        // do not block on read if not required
-        if (_serial.available() < inpkt.getData().size() && !wait4data ){
-            return false;
-        }
-
-        // init our out args always
-        *reply = {};
-
-        size_t readlen = _serial.readBytes(inpkt.getData().data(), inpkt.size());
-
-#ifdef DfMiniMp3Debug
-        DfMiniMp3Debug.print("IN ");
-        printRawPacket(inpkt.getData());
-        //printRawPacket(reinterpret_cast<const uint8_t*>(&in), read);
-        DfMiniMp3Debug.println();
-#endif
-
-        if (readlen < inpkt.size())
-        {
-            DfMiniMp3Debug.println("DF: bad size pkt");
-            // not enough bytes, corrupted packet
-            reply->arg = DfMp3_Error_PacketSize;
-            return false;
-        }
-
-        if (!inpkt.validate())
-        {
-            DfMiniMp3Debug.println("DF: invalid pkt");
-            // invalid version or corrupted packet
-            reply->arg = DfMp3_Error_PacketHeader;
-            // either we received garbage or lost/missed packet header, won't look for it, just flush stream and retry
-            _serial.flush();
-            return false;
-        }
-
-        if (!inpkt.validateChecksum())
-        {
-            DfMiniMp3Debug.print("DF: bad csum");
-            // checksum failed, corrupted packet
-            reply->arg = DfMp3_Error_PacketChecksum;
-            return false;
-        }
-
-        reply->command = inpkt.getCmd();
-        reply->arg = inpkt.getArg();
-
-        return true;
-    }
-
-    reply_t retryCommand(uint8_t command, 
-            uint8_t expectedCommand, 
-            uint16_t arg = 0, 
-            bool requestAck = false)
-    {
-        reply_t reply;
-        uint8_t retries = _comRetries;
-
-
-#ifdef DfMiniMp3Debug
-        if (_inTransaction != 0)
-        {
-            DfMiniMp3Debug.print("Rentrant? _inTransaction ");
-            DfMiniMp3Debug.print(_inTransaction);
-        }
-        else
-#endif
-        {
-            drainResponses();
-        }
-
-#ifdef DfMiniMp3Debug
-        _inTransaction++;
-#endif
-        if (_player->commandSupportsAck(command))
-        {
-            // with ack support, 
-            // we may retry if we don't get what we expected
-            //
-            _serial.setTimeout(_c_AckTimeout);
-            do
-            {
-                sendPacket(command, arg, requestAck);
-                reply = listenForReply(expectedCommand);
-                retries--;
-            } while (reply.command != expectedCommand && retries);
-        }
-        else
-        {
-            // without ack support, 
-            // we may retry only if we get an error
-            //
-            _serial.setTimeout(c_NoAckTimeout);
-            do
-            {
-                sendPacket(command, arg, requestAck);
-                reply = listenForReply(expectedCommand);
-                retries--;
-            } while (reply.command == Mp3_Replies_Error && retries);
-        }
-#ifdef DfMiniMp3Debug
-        _inTransaction--;
-#endif
-
-        if (reply.command == Mp3_Replies_Error)
-        {
-            if (_cb_OnErr) _cb_OnErr(reply.arg);
-            reply = {};
-        }
-        
-        return reply;
-    }
-
-    reply_t getCommand(uint8_t command, uint16_t arg = 0)
-    {
-        return retryCommand(command, command, arg);
-    }
-
-    void setCommand(uint8_t command, uint16_t arg = 0)
-    {
-        retryCommand(command, Mp3_Replies_Ack, arg, true);
-    }
-
-    reply_t listenForReply(uint8_t command, bool wait4data = true)
-    {
-        reply_t reply;
-
-        while (readPacket(&reply, wait4data))
-        {
-            switch (reply.command)
-            {
-            case Mp3_Replies_PlaySource_Online: // play source online
-            case Mp3_Replies_PlaySource_Inserted: // play source inserted
-            case Mp3_Replies_PlaySource_Removed: // play source removed
-                _isOnline = true;
-                appendNotification(reply);
-                break;
-
-            case Mp3_Replies_TrackFinished_Usb: // usb
-            case Mp3_Replies_TrackFinished_Sd: // micro sd
-            case Mp3_Replies_TrackFinished_Flash: // flash
-                appendNotification(reply);
-                break;
-
-            case Mp3_Replies_Error: // error
-                if (command == Mp3_Commands_None)
-                {
-                    appendNotification(reply);
-                }
-                else
-                {
-                    return reply;
-                }
-                break;
-
-            case Mp3_Replies_Ack: // ack
-            default:
-                if (command != Mp3_Commands_None)
-                {
-                    return reply;
-                }
-                break;
-            }
-
-            // for not specific listen, only drain
-            // one message at a time
-            if (command == Mp3_Commands_None)
-            {
-                break;
-            }
-        }
-
-
-        return {};
-    }
-
-#ifdef DfMiniMp3Debug
-    void printRawPacket(const DFPlayerData& data)
-    {
-        for (auto &c : data){
-            DfMiniMp3Debug.printf("%02X ", c);
-        }
-    }
-
+    void printRawPacket(const DFPlayerData& data);
 #endif
 };
