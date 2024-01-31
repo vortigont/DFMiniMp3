@@ -27,9 +27,9 @@ License along with DFMiniMp3.  If not, see
 
 #include <functional>
 #include <memory>
+#include <list>
 #include "Mp3ChipBase.h"
 #include "Stream.h"
-#include "internal/queueSimple.h"
 
 #define DF_ACK_TIMEOUT   900
 
@@ -324,15 +324,7 @@ private:
         }
 
 #ifdef DfMiniMp3Debug
-        void printReply() const
-        {
-            char formated[8];
-
-            sprintf(formated, " %02x", command);
-            DfMiniMp3Debug.print(formated);
-            sprintf(formated, " %04x", arg);
-            DfMiniMp3Debug.print(formated);
-        }
+        void printReply() const;
 #endif
     };
 
@@ -346,7 +338,7 @@ private:
 #ifdef DfMiniMp3Debug
     int8_t _inTransaction;
 #endif
-    queueSimple_t<reply_t> _queueNotifications;
+    std::list<reply_t> _queueNotifications;
 
     // Chip handler instance
     std::unique_ptr<Mp3ChipBase> _player;
@@ -356,19 +348,9 @@ private:
     DF_OnPlaySourceEvent _cb_OnPlaySourceEvent = nullptr;
     DF_OnError _cb_OnErr = nullptr;
 
-    void appendNotification(reply_t reply)
-    {
-        // store the notification for later calling so
-        // current comms transactions can be finished
-        // without interruption
-        _queueNotifications.Enqueue(reply);
-    }
-
-    bool abateNotification();
+    void abateNotification();
 
     void callNotification(reply_t reply);
-
-    void drainResponses(){ loop(); }
 
     bool readPacket(reply_t* reply, bool wait4data = true);
 

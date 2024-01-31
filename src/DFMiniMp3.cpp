@@ -25,16 +25,18 @@ License along with DFMiniMp3.  If not, see
 -------------------------------------------------------------------------*/
 
 #include "DFMiniMp3.h"
+#ifdef DfMiniMp3Debug
+#include "Arduino.h"        // needed for Serial
+#endif
 
 DFMiniMp3::DFMiniMp3(Stream& serial, DfMp3Type type, uint32_t ackTimeout) :
     _serial(serial),
     _c_AckTimeout(ackTimeout),
     _comRetries(3), // default to three retries
-    _isOnline(false),
+    _isOnline(false)
 #ifdef DfMiniMp3Debug
-    _inTransaction(0),
+    ,_inTransaction(0)
 #endif
-    _queueNotifications(4) // default to 4 notifications in queue
 {
     switch (type){
         case DfMp3Type::nochksum :
@@ -56,21 +58,19 @@ DFMiniMp3::DFMiniMp3(Stream& serial, DfMp3Type type, std::unique_ptr<Mp3ChipBase
 #ifdef DfMiniMp3Debug
     _inTransaction(0),
 #endif
-    _queueNotifications(4), // default to 4 notifications in queue
     _player(std::move(mp3chip)) {}
 
 void DFMiniMp3::loop(){
-    // call all outstanding notifications
-    while (abateNotification());
+    // process only one notification from the q at a time
+    abateNotification();
 
-    // check for any new notifications in comms
-    uint8_t maxDrains = 6;
+    size_t pending;
 
-    while (maxDrains)
-    {
+    // consume all messages from Stream buffer if any
+    do {
+        pending = _queueNotifications.size();
         listenForReply(Mp3_Commands_None, false);
-        maxDrains--;
-    }
+    } while (pending != _queueNotifications.size());
 }
 
 uint16_t DFMiniMp3::getCurrentTrack(DfMp3_PlaySource source){
@@ -127,16 +127,11 @@ uint16_t DFMiniMp3::getTotalTrackCount(DfMp3_PlaySource source){
     return getCommand(command).arg;
 }
 
-bool DFMiniMp3::abateNotification(){
-    // remove the first notification and call it
-    reply_t reply;
-    bool wasAbated = false;
-    if (_queueNotifications.Dequeue(&reply))
-    {
-        callNotification(reply);
-        wasAbated = true;
+void DFMiniMp3::abateNotification(){
+    if (_queueNotifications.size()){
+        callNotification(_queueNotifications.front());
+        _queueNotifications.pop_front();
     }
-    return wasAbated;
 }
 
 void DFMiniMp3::callNotification(reply_t reply){
@@ -148,29 +143,25 @@ void DFMiniMp3::callNotification(reply_t reply){
 
     case Mp3_Replies_TrackFinished_Sd: // micro sd
         if (_cb_OnPlayFinished) _cb_OnPlayFinished(DfMp3_PlaySources_Sd, reply.arg);
-        //T_NOTIFICATION_METHOD::OnPlayFinished(*this, DfMp3_PlaySources_Sd, reply.arg);
         break;
 
     case Mp3_Replies_TrackFinished_Flash: // flash
         if (_cb_OnPlayFinished) _cb_OnPlayFinished(DfMp3_PlaySources_Flash, reply.arg);
-        //T_NOTIFICATION_METHOD::OnPlayFinished(*this, DfMp3_PlaySources_Flash, reply.arg);
         break;
 
     case Mp3_Replies_PlaySource_Online:
     case Mp3_Replies_PlaySource_Inserted:
     case Mp3_Replies_PlaySource_Removed:
         if (_cb_OnPlaySourceEvent) _cb_OnPlaySourceEvent(static_cast<DfMp3_SourceEvent>(reply.command), static_cast<DfMp3_PlaySources>(reply.arg));
-        //T_NOTIFICATION_METHOD::OnPlaySourceOnline(*this, static_cast<DfMp3_PlaySources>(reply.arg));
         break;
 
     case Mp3_Replies_Error: // error
         if (_cb_OnErr) _cb_OnErr(reply.arg);
-        //T_NOTIFICATION_METHOD::OnError(*this, reply.arg);
         break;
 
     default:
 #ifdef DfMiniMp3Debug
-        DfMiniMp3Debug.print("INVALID NOTIFICATION: ");
+        DfMiniMp3Debug.print("DFP: INVALID NOTIFICATION: ");
         reply.printReply();
         DfMiniMp3Debug.println();
 #endif
@@ -216,7 +207,9 @@ bool DFMiniMp3::readPacket(reply_t* reply, bool wait4data){
 
     if (readlen < inpkt.size())
     {
+#ifdef DfMiniMp3Debug
         DfMiniMp3Debug.println("DF: bad size pkt");
+#endif
         // not enough bytes, corrupted packet
         reply->arg = DfMp3_Error_PacketSize;
         return false;
@@ -224,7 +217,9 @@ bool DFMiniMp3::readPacket(reply_t* reply, bool wait4data){
 
     if (!inpkt.validate())
     {
+#ifdef DfMiniMp3Debug
         DfMiniMp3Debug.println("DF: invalid pkt");
+#endif
         // invalid version or corrupted packet
         reply->arg = DfMp3_Error_PacketHeader;
         // either we received garbage or lost/missed packet header, won't look for it, just flush stream and retry
@@ -234,7 +229,9 @@ bool DFMiniMp3::readPacket(reply_t* reply, bool wait4data){
 
     if (!inpkt.validateChecksum())
     {
+#ifdef DfMiniMp3Debug
         DfMiniMp3Debug.print("DF: bad csum");
+#endif
         // checksum failed, corrupted packet
         reply->arg = DfMp3_Error_PacketChecksum;
         return false;
@@ -260,7 +257,7 @@ DFMiniMp3::reply_t DFMiniMp3::retryCommand(uint8_t command, uint8_t expectedComm
     else
 #endif
     {
-        drainResponses();
+        loop();
     }
 
 #ifdef DfMiniMp3Debug
@@ -316,24 +313,20 @@ DFMiniMp3::reply_t DFMiniMp3::listenForReply(uint8_t command, bool wait4data){
         case Mp3_Replies_PlaySource_Inserted: // play source inserted
         case Mp3_Replies_PlaySource_Removed: // play source removed
             _isOnline = true;
-            appendNotification(reply);
+            _queueNotifications.push_back(reply);
             break;
 
         case Mp3_Replies_TrackFinished_Usb: // usb
         case Mp3_Replies_TrackFinished_Sd: // micro sd
         case Mp3_Replies_TrackFinished_Flash: // flash
-            appendNotification(reply);
+            _queueNotifications.push_back(reply);
             break;
 
         case Mp3_Replies_Error: // error
             if (command == Mp3_Commands_None)
-            {
-                appendNotification(reply);
-            }
+                _queueNotifications.push_back(reply);
             else
-            {
                 return reply;
-            }
             break;
 
         case Mp3_Replies_Ack: // ack
@@ -364,6 +357,13 @@ void DFMiniMp3::printRawPacket(const DFPlayerData& data)
     for (auto &c : data){
         DfMiniMp3Debug.printf("%02X ", c);
     }
+}
+
+void DFMiniMp3::reply_t::printReply() const {
+    DfMiniMp3Debug.printf(" %02x", command);
+    char formated[8];
+    snprintf(formated, 8, " %04x", arg);
+    DfMiniMp3Debug.print(formated);
 }
 #endif
 
