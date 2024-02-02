@@ -129,8 +129,18 @@ uint16_t DFMiniMp3::getTotalTrackCount(DfMp3_PlaySource source){
 
 void DFMiniMp3::abateNotification(){
     if (_queueNotifications.size()){
-        callNotification(_queueNotifications.front());
-        _queueNotifications.pop_front();
+        /*
+          need a lock before calling notifications because there could a case when in event callbask
+          user code might try to send another command to player. SendCommand will trigger another call to loop() and
+          abateNotification() that could result in concurrent access.
+          With mutex we deny nested notification processing and postpone it till the next call to loop()
+        */
+        std::unique_lock<std::mutex> lock(_mtx, std::defer_lock);
+        if (lock.try_lock()){
+            callNotification(_queueNotifications.front());
+            _queueNotifications.pop_front();
+            lock.unlock();
+        }
     }
 }
 

@@ -30,6 +30,7 @@ License along with DFMiniMp3.  If not, see
 #include <list>
 #include "Mp3ChipBase.h"
 #include "Stream.h"
+#include <mutex>
 
 #define DF_ACK_TIMEOUT   900
 
@@ -330,6 +331,7 @@ private:
 
     // Serial port object for communicating with player
     Stream& _serial;
+
     const uint32_t _c_AckTimeout;
     const uint32_t c_NoAckTimeout = 50; // 30ms observerd, added a little overhead
 
@@ -342,6 +344,8 @@ private:
 
     // Chip handler instance
     std::unique_ptr<Mp3ChipBase> _player;
+    // event Q mutex
+    std::mutex _mtx;
 
     // func callback pointers
     DF_OnPlayFinished _cb_OnPlayFinished = nullptr;
