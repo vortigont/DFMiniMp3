@@ -39,14 +39,18 @@ DFMiniMp3::DFMiniMp3(Stream& serial, DfMp3Type type, uint32_t ackTimeout) :
 #endif
 {
     switch (type){
+        // be c++11 compatible
         case DfMp3Type::nochksum :
-            _player = std::make_unique<Mp3ChipMH2024K16SS>();
+            // _player.reset(new Mp3ChipMH2024K16SS());
+            _player.reset(new Mp3ChipMH2024K16SS());
             break;
         case DfMp3Type::incongruousNoAck :
-            _player = std::make_unique<Mp3ChipIncongruousNoAck>();
+            // _player = std::make_unique<Mp3ChipIncongruousNoAck>();
+            _player.reset(new Mp3ChipIncongruousNoAck());
             break;
         default :
-            _player = std::make_unique<DFPlayerOriginal>();
+            // _player = std::make_unique<DFPlayerOriginal>();
+            _player.reset(new DFPlayerOriginal());
     }        
 }
 
@@ -171,7 +175,7 @@ void DFMiniMp3::callNotification(reply_t reply){
 
     default:
 #ifdef DfMiniMp3Debug
-        DfMiniMp3Debug.print("DFP: INVALID NOTIFICATION: ");
+        DfMiniMp3Debug.print("DF: INVALID NOTIFICATION: ");
         reply.printReply();
         DfMiniMp3Debug.println();
 #endif
@@ -180,22 +184,18 @@ void DFMiniMp3::callNotification(reply_t reply){
 }
 
 void DFMiniMp3::sendPacket(uint8_t command, uint16_t arg, bool requestAck){
-    //typename T_CHIP_VARIANT::SendPacket packet = T_CHIP_VARIANT::generatePacket(command, arg, requestAck);
     DFPlayerPacket packet = _player->makeTXPacket(command, arg, requestAck);
 
 #ifdef DfMiniMp3Debug
     DfMiniMp3Debug.print("OUT ");
     printRawPacket(packet.getData());
-    //printRawPacket(reinterpret_cast<const uint8_t*>(&packet), sizeof(packet));
     DfMiniMp3Debug.println();
 #endif
 
-    //_serial.write(reinterpret_cast<uint8_t*>(&packet), sizeof(packet));
     _serial.write(packet.getData().data(), packet.size());
 }
 
 bool DFMiniMp3::readPacket(reply_t* reply, bool wait4data){
-    //typename T_CHIP_VARIANT::ReceptionPacket in;
     DFPlayerPacket inpkt = _player->makeRXPacket();
 
     // do not block on read if not required
@@ -211,7 +211,6 @@ bool DFMiniMp3::readPacket(reply_t* reply, bool wait4data){
 #ifdef DfMiniMp3Debug
     DfMiniMp3Debug.print("IN ");
     printRawPacket(inpkt.getData());
-    //printRawPacket(reinterpret_cast<const uint8_t*>(&in), read);
     DfMiniMp3Debug.println();
 #endif
 
