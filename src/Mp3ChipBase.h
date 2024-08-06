@@ -25,6 +25,7 @@ License along with DFMiniMp3.  If not, see
 -------------------------------------------------------------------------*/
 
 #pragma once
+#include <stddef.h>
 #include <stdint.h>
 #include <vector>
 #include "DfMp3Types.h"
