@@ -25,7 +25,6 @@ License along with DFMiniMp3.  If not, see
 -------------------------------------------------------------------------*/
 
 #pragma once
-#include <stddef.h>
 #include <stdint.h>
 #include <vector>
 #include "DfMp3Types.h"
@@ -90,7 +89,7 @@ public:
 
     bool validate();
 
-    size_t size() const { return _msg.size(); };
+    std::size_t size() const { return _msg.size(); };
 
     DFPlayerData& getData(){ return _msg; };
 
@@ -127,7 +126,7 @@ public:
      * @return true 
      * @return false 
      */
-    virtual bool commandSupportsAck( uint8_t command) const = 0;
+    virtual bool commandSupportsAck( uint8_t command) = 0;
 
     virtual DFPlayerPacket makeTXPacket(uint8_t command, uint16_t arg, bool requestAck = false);
 
@@ -140,7 +139,7 @@ class DFPlayerOriginal : public Mp3ChipBase
 public:
     DFPlayerOriginal() : Mp3ChipBase(){}
 
-    bool commandSupportsAck([[maybe_unused]] uint8_t command) const override { return true; }
+    bool commandSupportsAck([[maybe_unused]] uint8_t command) override { return true; }
 };
 
 class Mp3ChipIncongruousNoAck : public Mp3ChipBase
@@ -148,7 +147,7 @@ class Mp3ChipIncongruousNoAck : public Mp3ChipBase
 public:
     Mp3ChipIncongruousNoAck() : Mp3ChipBase(){}
 
-    bool commandSupportsAck(uint8_t command) const override
+    bool commandSupportsAck(uint8_t command) override
     {
         return (command > Mp3_Commands_Requests);
     }
@@ -159,5 +158,5 @@ class Mp3ChipMH2024K16SS : public Mp3ChipBase
 public:
     Mp3ChipMH2024K16SS() : Mp3ChipBase(false){}
 
-    bool commandSupportsAck(uint8_t command) const override { return true; }
+    bool commandSupportsAck(uint8_t command) override { return true; }
 };
